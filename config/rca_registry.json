@@ -1,0 +1,194 @@
+{
+	"_comment": "RCA Registry — CI relationships, alert cascade patterns, and gap detection rules. This file is the brain of the RCA engine. Edit manually or train from incidents via the RCA UI (Super Admin only).",
+	"_version": "1.0.0",
+	"_last_trained": null,
+	"_trained_incident_count": 0,
+
+	"ci_relationships": {
+		"_comment": "Defines known dependency paths between server types. Used to build the dependency map and validate cascade direction.",
+		"relationships": [
+			{
+				"id": "rel_001",
+				"from_type": "07",
+				"from_name": "Storage",
+				"to_type": "03",
+				"to_name": "SQL DB / MSSQL",
+				"relationship": "storage_dependency",
+				"direction": "upstream_to_downstream",
+				"expected_cascade_seconds": 180,
+				"note": "Storage I/O issues propagate to DB query performance"
+			},
+			{
+				"id": "rel_002",
+				"from_type": "07",
+				"from_name": "Storage",
+				"to_type": "04",
+				"to_name": "Oracle DB",
+				"relationship": "storage_dependency",
+				"direction": "upstream_to_downstream",
+				"expected_cascade_seconds": 180,
+				"note": "Storage I/O issues propagate to Oracle DB"
+			},
+			{
+				"id": "rel_003",
+				"from_type": "03",
+				"from_name": "SQL DB / MSSQL",
+				"to_type": "02",
+				"to_name": "App Server",
+				"relationship": "data_dependency",
+				"direction": "upstream_to_downstream",
+				"expected_cascade_seconds": 300,
+				"note": "DB degradation causes app response time increase"
+			},
+			{
+				"id": "rel_004",
+				"from_type": "04",
+				"from_name": "Oracle DB",
+				"to_type": "02",
+				"to_name": "App Server",
+				"relationship": "data_dependency",
+				"direction": "upstream_to_downstream",
+				"expected_cascade_seconds": 300,
+				"note": "Oracle DB degradation causes app response time increase"
+			},
+			{
+				"id": "rel_005",
+				"from_type": "02",
+				"from_name": "App Server",
+				"to_type": "01",
+				"to_name": "Web Server",
+				"relationship": "service_dependency",
+				"direction": "upstream_to_downstream",
+				"expected_cascade_seconds": 120,
+				"note": "App degradation causes HTTP error rate on web tier"
+			},
+			{
+				"id": "rel_006",
+				"from_type": "02",
+				"from_name": "App Server",
+				"to_type": "06",
+				"to_name": "Citrix Server",
+				"relationship": "service_dependency",
+				"direction": "upstream_to_downstream",
+				"expected_cascade_seconds": 240,
+				"note": "App backend issues affect Citrix session performance"
+			},
+			{
+				"id": "rel_007",
+				"from_type": "01",
+				"from_name": "Web Server",
+				"to_type": "05",
+				"to_name": "Load Balancer",
+				"relationship": "health_check",
+				"direction": "upstream_to_downstream",
+				"expected_cascade_seconds": 60,
+				"note": "Web server failures trigger LB health check alerts"
+			}
+		]
+	},
+
+	"alert_patterns": {
+		"_comment": "Known alert cascade patterns. Matched by trigger name glob pattern. Used for correlation and root cause scoring.",
+		"patterns": [
+			{
+				"id": "pat_001",
+				"cause_pattern": "Disk I/O latency*",
+				"effect_pattern": "MySQL slow query*",
+				"cause_type": "07",
+				"effect_type": "03",
+				"window_seconds": 180,
+				"confidence": 0.94,
+				"seen_count": 14,
+				"note": "Storage I/O latency causes MySQL slow queries within 3 min"
+			},
+			{
+				"id": "pat_002",
+				"cause_pattern": "Disk I/O latency*",
+				"effect_pattern": "Oracle*performance*",
+				"cause_type": "07",
+				"effect_type": "04",
+				"window_seconds": 180,
+				"confidence": 0.88,
+				"seen_count": 6,
+				"note": "Storage I/O latency causes Oracle performance alerts"
+			},
+			{
+				"id": "pat_003",
+				"cause_pattern": "CPU utilization*",
+				"effect_pattern": "Application response*",
+				"cause_type": "02",
+				"effect_type": "02",
+				"window_seconds": 300,
+				"confidence": 0.88,
+				"seen_count": 22,
+				"note": "CPU spike causes application response degradation"
+			},
+			{
+				"id": "pat_004",
+				"cause_pattern": "MySQL slow query*",
+				"effect_pattern": "Application response*",
+				"cause_type": "03",
+				"effect_type": "02",
+				"window_seconds": 300,
+				"confidence": 0.82,
+				"seen_count": 18,
+				"note": "DB slow queries cause app tier degradation"
+			},
+			{
+				"id": "pat_005",
+				"cause_pattern": "Application response*",
+				"effect_pattern": "HTTP*5xx*",
+				"cause_type": "02",
+				"effect_type": "01",
+				"window_seconds": 180,
+				"confidence": 0.79,
+				"seen_count": 11,
+				"note": "App degradation causes HTTP 5xx errors on web tier"
+			},
+			{
+				"id": "pat_006",
+				"cause_pattern": "*connection pool*",
+				"effect_pattern": "CPU utilization*",
+				"cause_type": "03",
+				"effect_type": "02",
+				"window_seconds": 120,
+				"confidence": 0.71,
+				"seen_count": 9,
+				"note": "DB connection pool saturation causes app CPU spike"
+			}
+		]
+	},
+
+	"gap_rules": {
+		"_comment": "Rules for detecting missing expected alerts. If a cause fires but expected effect does NOT appear within window_seconds, flag as a gap.",
+		"rules": [
+			{
+				"id": "gap_001",
+				"trigger_pattern": "Disk I/O latency*",
+				"trigger_type": "07",
+				"expected_pattern": "Storage*health*",
+				"expected_type": "07",
+				"window_seconds": 60,
+				"gap_severity": "warning",
+				"message": "Expected storage health check alert did not fire. Possible missing trigger or threshold too high.",
+				"seen_count": 0
+			},
+			{
+				"id": "gap_002",
+				"trigger_pattern": "MySQL slow query*",
+				"trigger_type": "03",
+				"expected_pattern": "*connection pool*",
+				"expected_type": "03",
+				"window_seconds": 90,
+				"gap_severity": "info",
+				"message": "Slow queries detected without connection pool alert. Possible query-level issue only.",
+				"seen_count": 0
+			}
+		]
+	},
+
+	"training_log": {
+		"_comment": "Appended automatically when 'Train Registry' is triggered from an incident. Used to improve pattern confidence over time.",
+		"entries": []
+	}
+}

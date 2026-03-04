@@ -1,0 +1,44 @@
+{
+	"_comment": "Manual overrides for hostnames that do not follow the standard 13-char format. Add any non-standard hostname here to resolve it correctly without touching PHP. Fields: env, customer, product, type, instance are all optional — only provide what you know.",
+
+	"_schema": {
+		"hostname": "exact hostname string as it appears in Zabbix",
+		"env":      "pr | ts | dv",
+		"customer": "customer code from hostname_map.json (e.g. bd19)",
+		"product":  "product code (e.g. 01)",
+		"type":     "server type code (e.g. 07)",
+		"instance": "instance string",
+		"note":     "free-text explanation of why this exception exists",
+		"resolved_name": "optional human-readable override for display"
+	},
+
+	"exceptions": [
+		{
+			"hostname": "prbd19-storage-01",
+			"env": "pr",
+			"customer": "bd19",
+			"product": "01",
+			"type": "07",
+			"instance": "001",
+			"note": "Legacy naming convention before standard format was enforced",
+			"resolved_name": "Google Inc · Storage · #001 (legacy)"
+		},
+		{
+			"hostname": "network-core-sw01",
+			"env": "pr",
+			"customer": "bd19",
+			"product": "01",
+			"type": "05",
+			"instance": "001",
+			"note": "Network switch — not a standard server host",
+			"resolved_name": "Google Inc · Core Switch · #001"
+		}
+	],
+
+	"_instructions": [
+		"Add one object per non-standard hostname in the 'exceptions' array.",
+		"The parser checks this file FIRST for any hostname that fails the 13-char positional parse.",
+		"If not found here either, the parser falls back to Zabbix hostgroup/tag metadata.",
+		"If all fallbacks fail, the host appears with a ⚠ UNRESOLVED badge but is still shown in the timeline."
+	]
+}

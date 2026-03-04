@@ -1,0 +1,24 @@
+{
+	"manifest_version": 2.0,
+	"id": "rca",
+	"name": "Root Cause Analysis (RCA) View",
+	"version": "1.0.0",
+	"namespace": "RCA",
+	"description": "Advanced Root Cause Analysis module with timeline visualization, cascade chain detection, gap analysis, CI relationship mapping, and trainable registry. Supports hostname-based metadata parsing and Zabbix hostgroup fallback.",
+	"author": "Custom Development",
+	"url": "https://github.com/yourorg/zabbix-rca",
+	"actions": {
+		"RcaView": {
+			"class": "RcaView",
+			"view": "rca.view"
+		},
+		"RcaData": {
+			"class": "RcaData",
+			"view": "rca.data"
+		},
+		"RcaRegistry": {
+			"class": "RcaRegistry",
+			"view": "rca.registry"
+		}
+	}
+}
