@@ -23,10 +23,13 @@ $assetBase = 'modules/' . $moduleId . '/assets';
 $ajaxUrl     = (new CUrl('zabbix.php'))->setArgument('action', 'RcaData')->getUrl();
 $registryUrl = (new CUrl('zabbix.php'))->setArgument('action', 'RcaRegistry')->getUrl();
 
+$serverTypes = $data['server_types'] ?? [];
+
 $jsConfig = json_encode([
 	'is_super_admin' => $isSuperAdmin,
 	'ajax_url'       => $ajaxUrl,
 	'registry_url'   => $registryUrl,
+	'server_types'   => $serverTypes,
 ], JSON_HEX_TAG | JSON_HEX_AMP);
 ?>
 <link rel="stylesheet" type="text/css" href="<?= $assetBase ?>/css/rca.css">
