@@ -940,3 +940,38 @@
 .rca-sev-dot-warning  { background: #649e49; box-shadow: 0 0 6px #649e49; }
 .rca-sev-dot-info     { background: #58a6ff; box-shadow: 0 0 6px #58a6ff; }
 .rca-sev-dot-nc       { background: #666;    box-shadow: none;             }
+
+/* ── RESOLVED EVENTS (OK / green) ───────────────────────────────────────── */
+.rca-evt-ok {
+	background: rgba(63, 185, 80, .75);
+	border-left: 3px solid #3fb950;
+	color: #fff;
+}
+.rca-evt-ok-badge {
+	font-size: 9px;
+	font-weight: 700;
+	letter-spacing: .5px;
+	background: rgba(0,0,0,.25);
+	border-radius: 3px;
+	padding: 1px 4px;
+	margin-right: 4px;
+	vertical-align: middle;
+}
+.rca-evt-label {
+	vertical-align: middle;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* ── MATRIX CLICK HIGHLIGHT ─────────────────────────────────────────────── */
+.rca-matrix-highlight {
+	outline: 2px solid #fff !important;
+	outline-offset: 1px;
+	z-index: 10;
+	animation: rca-matrix-flash 0.4s ease 3;
+}
+@keyframes rca-matrix-flash {
+	0%, 100% { opacity: 1; }
+	50%       { opacity: 0.4; }
+}
