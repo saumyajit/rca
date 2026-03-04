@@ -899,3 +899,44 @@
 	:root { --rca-tl-label-w: 120px; }
 	.rca-detail-panel { min-width: 260px; }
 }
+
+/* ── SEVERITY — ALL 6 ZABBIX LEVELS ────────────────────────────────────── */
+/* Event blocks on timeline */
+.rca-evt-disaster { background: rgba(228, 85, 85, .90);  color: #fff; border-left-color: #e45555; }
+.rca-evt-high     { background: rgba(233,123,  0, .85);  color: #fff; border-left-color: #e97b00; }
+.rca-evt-average  { background: rgba(240,165,  0, .85);  color: #000; border-left-color: #f0a500; }
+.rca-evt-warning  { background: rgba(100,158, 73, .85);  color: #fff; border-left-color: #649e49; }
+.rca-evt-info     { background: rgba( 88,166,255, .75);  color: #fff; border-left-color: #58a6ff; }
+.rca-evt-nc       { background: rgba(100,100,100, .60);  color: #ccc; border-left-color: #666;    }
+
+/* Summary strip severity stat tiles */
+.rca-stat-disaster .rca-stat-val { color: #e45555; }
+.rca-stat-high     .rca-stat-val { color: #e97b00; }
+.rca-stat-average  .rca-stat-val { color: #f0a500; }
+.rca-stat-warning  .rca-stat-val { color: #649e49; }
+.rca-stat-info     .rca-stat-val { color: #58a6ff; }
+.rca-stat-nc       .rca-stat-val { color: #8b949e; }
+
+/* Left border accent per severity on stat tiles */
+.rca-stat-disaster { border-left: 3px solid #e45555; }
+.rca-stat-high     { border-left: 3px solid #e97b00; }
+.rca-stat-average  { border-left: 3px solid #f0a500; }
+.rca-stat-warning  { border-left: 3px solid #649e49; }
+.rca-stat-info     { border-left: 3px solid #58a6ff; }
+.rca-stat-nc       { border-left: 3px solid #555;    }
+
+/* Separator between severity group and aggregate stats */
+.rca-summary-sep {
+	width: 1px;
+	background: var(--rca-border);
+	margin: 6px 4px;
+	align-self: stretch;
+}
+
+/* Event detail severity dot — all 6 levels */
+.rca-sev-dot-disaster { background: #e45555; box-shadow: 0 0 6px #e45555; }
+.rca-sev-dot-high     { background: #e97b00; box-shadow: 0 0 6px #e97b00; }
+.rca-sev-dot-average  { background: #f0a500; box-shadow: 0 0 6px #f0a500; }
+.rca-sev-dot-warning  { background: #649e49; box-shadow: 0 0 6px #649e49; }
+.rca-sev-dot-info     { background: #58a6ff; box-shadow: 0 0 6px #58a6ff; }
+.rca-sev-dot-nc       { background: #666;    box-shadow: none;             }
