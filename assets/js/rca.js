@@ -144,12 +144,16 @@
 	// ── SUMMARY STRIP ─────────────────────────────────────────────────────
 	function renderSummary(summary, rootCause) {
 		if (!summary) return;
-		setText('sval-critical', summary.critical ?? '—');
-		setText('sval-warning',  summary.warning  ?? '—');
-		setText('sval-hosts',    summary.affected_hosts ?? '—');
-		setText('sval-chains',   summary.chain_count ?? '—');
-		setText('sval-gaps',     summary.gap_count ?? '—');
-		setText('sval-span',     summary.span_fmt ?? '—');
+
+		// All 6 Zabbix severity levels
+		const sevKeys = ['disaster', 'high', 'average', 'warning', 'information', 'not_classified'];
+		sevKeys.forEach(k => setText('sval-' + k, summary[k] ?? 0));
+
+		// Aggregate stats
+		setText('sval-hosts',  summary.affected_hosts ?? '—');
+		setText('sval-chains', summary.chain_count    ?? '—');
+		setText('sval-gaps',   summary.gap_count      ?? '—');
+		setText('sval-span',   summary.span_fmt        ?? '—');
 
 		const badge = document.getElementById('rca-root-badge');
 		if (rootCause) {
@@ -991,10 +995,15 @@
 
 	// ── HELPERS ──────────────────────────────────────────────────────────
 	function severityCls(sev) {
-		if (sev >= 4) return 'rca-evt-crit';
-		if (sev >= 2) return 'rca-evt-warn';
-		if (sev === 1) return 'rca-evt-info';
-		return 'rca-evt-ok';
+		// Matches all 6 Zabbix severity levels
+		switch(sev) {
+			case 5: return 'rca-evt-disaster';
+			case 4: return 'rca-evt-high';
+			case 3: return 'rca-evt-average';
+			case 2: return 'rca-evt-warning';
+			case 1: return 'rca-evt-info';
+			default: return 'rca-evt-nc';
+		}
 	}
 
 	function pct(val, total) { return Math.max(0, Math.min(100, (val/total)*100)) + '%'; }
