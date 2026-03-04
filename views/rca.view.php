@@ -121,15 +121,6 @@ $jsConfig = json_encode([
 			<div class="rca-stat-val" id="sval-warning">—</div>
 			<div class="rca-stat-label"><?= _('Warning') ?></div>
 		</div>
-		<div class="rca-stat rca-stat-info">
-			<div class="rca-stat-val" id="sval-information">—</div>
-			<div class="rca-stat-label"><?= _('Information') ?></div>
-		</div>
-		<div class="rca-stat rca-stat-nc">
-			<div class="rca-stat-val" id="sval-not_classified">—</div>
-			<div class="rca-stat-label"><?= _('Not Classified') ?></div>
-		</div>
-
 		<div class="rca-summary-sep"></div>
 
 		<div class="rca-stat">
