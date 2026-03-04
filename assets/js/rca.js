@@ -94,36 +94,54 @@
 
 		setLoading(true);
 		hideEmpty();
+		// Clear previous error banners
+		document.querySelectorAll('.rca-err-banner').forEach(e => e.remove());
 
-		const params = new URLSearchParams({
-			action:    'RcaData',
-			time_from: timeFrom,
-			time_till: timeTill,
-			env, customer, search,
-		});
-		RCA.correlateBy.forEach(c => params.append('correlate_by[]', c));
+		// Build params — ajax_url already contains ?action=RcaData, don't duplicate it
+		const params = new URLSearchParams();
+		params.set('time_from', timeFrom);
+		params.set('time_till', timeTill);
+		if (env)      params.set('env',      env);
+		if (customer) params.set('customer', customer);
+		if (search)   params.set('search',   search);
+
+		// Correlation filters — send each active one as correlate_by[]
+		const activeCorrelate = Array.from(
+			document.querySelectorAll('.rca-ctag.rca-ctag-on')
+		).map(el => el.dataset.key);
+		activeCorrelate.forEach(c => params.append('correlate_by[]', c));
+		RCA.correlateBy = activeCorrelate;
 
 		try {
 			const resp = await fetch(RCA.config.ajax_url + '&' + params.toString(), {
 				headers: { 'X-Requested-With': 'XMLHttpRequest' }
 			});
+
+			// Guard: ensure response is JSON before parsing
+			const contentType = resp.headers.get('content-type') || '';
+			if (!contentType.includes('json') && !contentType.includes('javascript')) {
+				const text = await resp.text();
+				showError('Server returned non-JSON response. Check PHP logs.', { response_preview: text.substring(0, 500) });
+				return;
+			}
+
 			const data = await resp.json();
 
-			if (data.debug) {
-				console.log('[RCA Debug]', data.debug);
-			}
+			if (data.debug) console.log('[RCA Debug]', data.debug);
 
 			if (data.error) {
 				showError(data.error, data.debug || null);
 				return;
 			}
 
-			if (data.summary && data.summary.total === 0) {
-				showError('API returned 0 events. Check debug panel below.', data.debug || null);
-			}
-
 			RCA.currentData = data;
 			renderSummary(data.summary, data.root_cause);
+
+			if (!data.events || data.events.length === 0) {
+				showNoAlerts();
+				return;
+			}
+
 			renderTimeline(data);
 			showView(RCA.currentView);
 
@@ -132,6 +150,20 @@
 		} finally {
 			setLoading(false);
 		}
+	}
+
+	function showNoAlerts() {
+		// Show friendly empty state instead of generic error
+		const empty = document.getElementById('rca-empty');
+		if (empty) {
+			empty.style.display = 'flex';
+			empty.querySelector('.rca-empty-icon').textContent = '✅';
+			empty.querySelector('.rca-empty-title').textContent = 'No Active Alerts Found';
+			empty.querySelector('.rca-empty-desc').textContent =
+				'No alerts matching severity Warning or above were found in the selected time window.';
+		}
+		// Hide all view content panels
+		document.querySelectorAll('.rca-view-content').forEach(v => v.style.display = 'none');
 	}
 
 	function getTimeRange() {
@@ -153,8 +185,8 @@
 	function renderSummary(summary, rootCause) {
 		if (!summary) return;
 
-		// All 6 Zabbix severity levels
-		const sevKeys = ['disaster', 'high', 'average', 'warning', 'information', 'not_classified'];
+		// 4 actionable severity levels (Information and Not classified excluded)
+		const sevKeys = ['disaster', 'high', 'average', 'warning'];
 		sevKeys.forEach(k => setText('sval-' + k, summary[k] ?? 0));
 
 		// Aggregate stats
@@ -292,25 +324,43 @@
 
 	function buildEventBlock(evt, tFrom, span) {
 		const el = document.createElement('div');
-		const leftPct  = Math.max(0, ((evt.clock - tFrom) / span) * 100);
-		// Width: fixed 8% minimum, or show resolved duration if available
-		const widthPct = Math.max(5, Math.min(60, 8));
+		const leftPct = Math.max(0, ((evt.clock - tFrom) / span) * 100);
 
-		el.className = 'rca-evt ' + severityCls(evt.severity);
-		el.style.left  = leftPct + '%';
-		el.style.width = widthPct + '%';
+		// Width: if resolved, show duration bar; otherwise fixed minimum
+		let widthPct = 5;
+		if (evt.r_clock && evt.r_clock > evt.clock) {
+			const dur = Math.max(0.5, ((evt.r_clock - evt.clock) / span) * 100);
+			widthPct  = Math.min(60, dur);
+		}
+
+		// Resolved events get green OK styling
+		const isResolved = evt.r_clock && evt.r_clock > 0;
+		const sevClass   = isResolved ? 'rca-evt-ok' : severityCls(evt.severity);
+
+		el.className     = 'rca-evt ' + sevClass;
+		el.style.left    = leftPct + '%';
+		el.style.width   = widthPct + '%';
 		el.dataset.eventid = evt.eventid;
 
-		// Root cause treatment
+		// Root cause crown
 		if (evt.rca_role === 'root_cause') {
 			el.classList.add('rca-evt-root');
-			const crown = document.createElement('div');
-			crown.className = 'rca-evt-root-icon';
+			const crown = document.createElement('span');
+			crown.className   = 'rca-evt-root-icon';
 			crown.textContent = '★';
 			el.appendChild(crown);
 		}
 
+		// Resolved badge
+		if (isResolved) {
+			const ok = document.createElement('span');
+			ok.className   = 'rca-evt-ok-badge';
+			ok.textContent = '✓ OK';
+			el.appendChild(ok);
+		}
+
 		const label = document.createElement('span');
+		label.className   = 'rca-evt-label';
 		label.textContent = (evt.type_icon ? evt.type_icon + ' ' : '') + evt.trigger_name;
 		el.appendChild(label);
 
@@ -636,22 +686,80 @@
 		}
 		html += '</tr></thead><tbody>';
 
+		// Build table using DOM (not innerHTML) so click handlers work
+		const table = document.createElement('table');
+		table.className = 'rca-matrix-table';
+
+		// Header
+		const thead = table.createTHead();
+		const hRow  = thead.insertRow();
+		hRow.insertCell().textContent = 'Host';
+		for (let i = 0; i < COLS; i++) {
+			const th = document.createElement('th');
+			th.textContent = formatTime(Math.round(tFrom + i * step));
+			hRow.appendChild(th);
+		}
+
+		// Body
+		const tbody = table.createTBody();
 		hosts.forEach(host => {
 			const hostEvts = events.filter(e => e.host === host);
-			html += `<tr><td style="padding:2px 8px;color:var(--rca-text2);font-size:11px;white-space:nowrap">${escHtml(host)}</td>`;
+			const tr       = tbody.insertRow();
+			const nameTd   = tr.insertCell();
+			nameTd.textContent = host;
+			nameTd.style.cssText = 'padding:2px 8px;color:var(--rca-text2);font-size:11px;white-space:nowrap';
+
 			for (let i = 0; i < COLS; i++) {
 				const bucketStart = tFrom + i * step;
 				const bucketEnd   = bucketStart + step;
 				const inBucket    = hostEvts.filter(e => e.clock >= bucketStart && e.clock < bucketEnd);
 				const maxSev      = inBucket.reduce((m, e) => Math.max(m, e.severity), 0);
-				html += `<td><div class="rca-matrix-cell rca-mc-${maxSev}" title="${inBucket.length} event(s)"></div></td>`;
+
+				const td   = tr.insertCell();
+				const cell = document.createElement('div');
+				cell.className = 'rca-matrix-cell rca-mc-' + maxSev;
+				cell.title     = inBucket.length + ' event(s) — click to view in timeline';
+
+				if (inBucket.length > 0) {
+					cell.style.cursor = 'pointer';
+					cell.addEventListener('click', () => {
+						// Switch to timeline, scroll to / highlight events in this bucket
+						showView('timeline');
+						document.querySelector('[data-view="timeline"]')?.classList.add('rca-vtab-active');
+						document.querySelectorAll('[data-view]').forEach(b => {
+							b.classList.toggle('rca-vtab-active', b.dataset.view === 'timeline');
+						});
+						RCA.currentView = 'timeline';
+
+						// Highlight matching event blocks in the timeline
+						document.querySelectorAll('.rca-evt').forEach(el => {
+							const evtId  = el.dataset.eventid;
+							const match  = inBucket.find(e => e.eventid == evtId);
+							el.classList.toggle('rca-matrix-highlight', !!match);
+						});
+
+						// Auto-select first event in bucket if only one
+						if (inBucket.length === 1) selectEvent(inBucket[0]);
+
+						// Remove highlight after 3s
+						setTimeout(() => {
+							document.querySelectorAll('.rca-matrix-highlight')
+								.forEach(el => el.classList.remove('rca-matrix-highlight'));
+						}, 3000);
+					});
+				}
+
+				td.appendChild(cell);
 			}
-			html += '</tr>';
 		});
 
-		html += '</tbody></table>';
-		html += `<div style="margin-top:12px;font-size:10px;color:var(--rca-text3)">Cells show max severity per time bucket. Click a cell to filter timeline to that slot.</div>`;
-		wrap.innerHTML = html;
+		wrap.innerHTML = '';
+		wrap.appendChild(table);
+
+		const hint = document.createElement('div');
+		hint.style.cssText = 'margin-top:12px;font-size:10px;color:var(--rca-text3)';
+		hint.textContent = 'Cells show max severity per time bucket. Click a highlighted cell to jump to that slot in the timeline.';
+		wrap.appendChild(hint);
 	}
 
 	// ── REGISTRY VIEW (Super Admin) ───────────────────────────────────────
