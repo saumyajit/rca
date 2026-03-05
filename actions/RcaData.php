@@ -34,12 +34,11 @@ class RcaData extends CController {
 			'env'          => 'string',
 			'customer'     => 'string',
 			'search'       => 'string',
-			'correlate_by'      => 'array',
-			'customer_groupid'  => 'string',
+			'correlate_by' => 'array',
 		];
 		$ret = $this->validateInput($fields);
 		if (!$ret) {
-			$this->setResponse(new CControllerResponseData($this->emptyResponse(0, 0)));
+			$this->sendJson($this->emptyResponse(0, 0));
 		}
 		return $ret;
 	}
@@ -53,7 +52,6 @@ class RcaData extends CController {
 		$timeFrom    = (int) $this->getInput('time_from', $timeTill - 3600);
 		$env         = $this->getInput('env', '');
 		$customer    = $this->getInput('customer', '');
-		$customerGroupId = $this->getInput('customer_groupid', '');
 		$search      = $this->getInput('search', '');
 		$correlateBy = $this->getInput('correlate_by', ['alert_name', 'time', 'hostgroup']);
 
@@ -70,7 +68,6 @@ class RcaData extends CController {
 		];
 
 		try {
-			$debug['step'] = 'fetchProblems';
 			$problems = $this->fetchProblems($timeFrom, $timeTill, $debug);
 			$debug['problems_fetched'] = count($problems);
 
@@ -86,24 +83,16 @@ class RcaData extends CController {
 				return;
 			}
 
-			$debug['step'] = 'fetchTriggerHostMap';
 			$triggerIds     = array_unique(array_column($problems, 'objectid'));
 			$triggerHostMap = $this->fetchTriggerHostMap($triggerIds);
 			$debug['triggers_mapped'] = count($triggerHostMap);
 
-			$debug['step'] = 'fetchHosts';
-			$hostIds       = array_unique(array_map(fn($h) => $h['hostid'], array_values($triggerHostMap)));
-			$hostsRaw      = $this->fetchHosts($hostIds);
-			$hostGroupsMap = $this->fetchHostGroupsMap($hostIds);
-			$debug['hostgroups_fetched'] = array_sum(array_map('count', $hostGroupsMap));
-			$debug['step'] = 'parseHostMeta';
-			$hostMeta      = $this->parseHostMeta($hostsRaw, $hostGroupsMap);
+			$hostIds  = array_unique(array_map(fn($h) => $h['hostid'], array_values($triggerHostMap)));
+			$hostsRaw = $this->fetchHosts($hostIds);
+			$hostMeta = $this->parseHostMeta($hostsRaw);
 			$debug['hosts_found'] = count($hostMeta);
 
-			// Resolve customer_groupid → allowed hostid set for group-based filtering
-			$debug['step'] = 'resolveGroupHostIds';
-			$allowedHostIds = $this->resolveGroupHostIds($customerGroupId, $debug);
-			$problems = $this->applyFilters($problems, $triggerHostMap, $hostMeta, $env, $allowedHostIds, $search);
+			$problems = $this->applyFilters($problems, $triggerHostMap, $hostMeta, $env, $customer, $search);
 			$debug['after_filter'] = count($problems);
 
 			if (empty($problems)) {
@@ -113,16 +102,11 @@ class RcaData extends CController {
 				return;
 			}
 
-			$debug['step'] = 'loadRegistry+buildEventList';
 			$registry  = $this->loadRegistry();
 			$events    = $this->buildEventList($problems, $triggerHostMap, $hostMeta);
-			$debug['step'] = 'detectCascadeChains';
 			$chains    = $this->detectCascadeChains($events, $registry, $correlateBy);
-			$debug['step'] = 'scoreRootCause';
 			$rootCause = $this->scoreRootCause($events, $chains, $registry);
-			$debug['step'] = 'detectGaps';
 			$gapAlerts = $this->detectGaps($events, $registry);
-			$debug['step'] = 'buildSummary';
 			$summary   = $this->buildSummary($events, $chains, $gapAlerts, $rootCause, $timeFrom, $timeTill);
 
 			$response = [
@@ -328,48 +312,20 @@ class RcaData extends CController {
 		if (empty($hostIds)) return [];
 		try {
 			$r = API::Host()->get([
-				'output'   => ['hostid', 'host', 'name', 'status'],
-				'hostids'  => $hostIds,
-				'selectTags' => ['tag', 'value'],
+				'output'       => ['hostid', 'host', 'name', 'status'],
+				'hostids'      => $hostIds,
+				'selectHostGroups' => ['groupid', 'name'],
+				'selectTags'   => ['tag', 'value'],
 			]);
 			return is_array($r) ? $r : [];
 		} catch (\Throwable $e) { return []; }
 	}
 
-	/**
-	 * Fetch hostgroups for a set of hosts using API::HostGroup()->get().
-	 * Returns map: hostid → [groupname, groupname, ...]
-	 * This avoids the selectHostGroups/selectGroups key ambiguity in Zabbix 7.0.
-	 */
-	private function fetchHostGroupsMap(array $hostIds): array {
-		if (empty($hostIds)) return [];
-		try {
-			$groups = API::HostGroup()->get([
-				'output'  => ['groupid', 'name'],
-				'hostids' => $hostIds,
-				'selectHosts' => ['hostid'],
-			]);
-			if (!is_array($groups)) return [];
-
-			$map = [];
-			foreach ($groups as $group) {
-				// Zabbix may return "0" (string) instead of [] for empty relations — skip
-				$hosts = $group['hosts'] ?? [];
-				if (!is_array($hosts)) continue;
-				foreach ($hosts as $host) {
-					if (!is_array($host)) continue; // extra guard
-					$map[$host['hostid']][] = $group['name'];
-				}
-			}
-			return $map;
-		} catch (\Throwable $e) { return []; }
-	}
-
-	private function parseHostMeta(array $hostsRaw, array $hostGroupsMap = []): array {
+	private function parseHostMeta(array $hostsRaw): array {
 		$parser = new HostnameParser();
 		$meta   = [];
 		foreach ($hostsRaw as $host) {
-			$groups                = $hostGroupsMap[$host['hostid']] ?? [];
+			$groups                = array_column($host['groups'] ?? [], 'name');
 			$parsed                = $parser->parse($host['host'], $groups);
 			$meta[$host['hostid']] = array_merge($parsed, [
 				'hostid'     => $host['hostid'],
@@ -382,50 +338,18 @@ class RcaData extends CController {
 		return $meta;
 	}
 
-
-	/**
-	 * Given a groupid string, return the set of hostids in that group.
-	 * Returns null if no groupid specified (meaning: no filter, all hosts allowed).
-	 */
-	private function resolveGroupHostIds(string $groupId, array &$debug): ?array {
-		if ($groupId === '') return null; // no filter
-
-		try {
-			$hosts = API::Host()->get([
-				'output'   => ['hostid'],
-				'groupids' => [$groupId],
-			]);
-			$ids = is_array($hosts) ? array_column($hosts, 'hostid') : [];
-			$debug['customer_group_hostids'] = count($ids);
-			return $ids;
-		} catch (\Throwable $e) {
-			$debug['customer_group_error'] = $e->getMessage();
-			return null;
-		}
-	}
-
 	private function applyFilters(array $problems, array $triggerHostMap, array $hostMeta,
-	                               string $env, ?array $allowedHostIds, string $search): array {
+	                               string $env, string $customer, string $search): array {
 		return array_values(array_filter($problems, function($p)
-		       use ($triggerHostMap, $hostMeta, $env, $allowedHostIds, $search) {
+		       use ($triggerHostMap, $hostMeta, $env, $customer, $search) {
 			if ((int)$p['severity'] < 2) return false;
 			$host = $triggerHostMap[$p['objectid']] ?? null;
 			if (!$host) return false;
 			$meta = $hostMeta[$host['hostid']] ?? [];
-
-			if ($env && ($meta['env'] ?? '') !== $env) return false;
-
-			// Group-based filter: check hostid is in the resolved group set
-			if ($allowedHostIds !== null && !in_array($host['hostid'], $allowedHostIds, true)) {
-				return false;
-			}
-
+			if ($env      && ($meta['env']      ?? '') !== $env)      return false;
+			if ($customer && ($meta['customer'] ?? '') !== $customer) return false;
 			if ($search) {
-				$hay = strtolower(
-					($host['host'] ?? '') . ' ' .
-					($p['name']    ?? '') . ' ' .
-					implode(' ', $meta['hostgroups'] ?? [])
-				);
+				$hay = strtolower(($host['host']??'').' '.($p['name']??'').' '.implode(' ',$meta['hostgroups']??[]));
 				if (strpos($hay, strtolower($search)) === false) return false;
 			}
 			return true;
@@ -471,7 +395,6 @@ class RcaData extends CController {
 				'parse_source'     => $meta['parse_source']     ?? 'unresolved',
 				'parse_confidence' => (float)($meta['parse_confidence'] ?? 0.0),
 				'unresolved'       => (bool)($meta['unresolved'] ?? false),
-				'hostgroups'       => $meta['hostgroups'] ?? [],
 				'rca_role'         => 'unknown',
 				'chain_id'         => null,
 				'delta_seconds'    => null,
@@ -490,7 +413,7 @@ class RcaData extends CController {
 				$delta = $effect['clock'] - $cause['clock'];
 				if ($delta <= 0 || $delta > 3600) continue;
 				$score = $this->correlationScore($cause, $effect, $patterns, $correlateBy, $delta);
-				if ($score < 0.20) continue;
+				if ($score < 0.35) continue;
 				$key = $cause['eventid'];
 				if (!isset($chains[$key])) {
 					$chains[$key] = ['chain_id' => 'chain_'.(++$chainIdx), 'root_event' => $cause,
@@ -521,11 +444,7 @@ class RcaData extends CController {
 			}
 		}
 		if (in_array('time',$by))      $s += 0.25*max(0,1.0-($delta/3600));
-		if (in_array('hostgroup',$by)) {
-			$shared = array_intersect($c['hostgroups'] ?? [], $e['hostgroups'] ?? []);
-			if (!empty($shared)) $s += 0.20;
-			elseif (!empty($c['customer_name']) && $c['customer_name'] === $e['customer_name']) $s += 0.15;
-		}
+		if (in_array('hostgroup',$by) && !empty($c['customer_name']) && $c['customer_name']===$e['customer_name']) $s += 0.20;
 		if ($c['type_layer'] < $e['type_layer']) $s += 0.10;
 		if (in_array('tags',$by)) {
 			$ol = count(array_intersect(array_column($c['tags'],'value'),array_column($e['tags'],'value')));
