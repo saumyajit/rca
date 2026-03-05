@@ -70,6 +70,7 @@ class RcaData extends CController {
 		];
 
 		try {
+			$debug['step'] = 'fetchProblems';
 			$problems = $this->fetchProblems($timeFrom, $timeTill, $debug);
 			$debug['problems_fetched'] = count($problems);
 
@@ -85,18 +86,22 @@ class RcaData extends CController {
 				return;
 			}
 
+			$debug['step'] = 'fetchTriggerHostMap';
 			$triggerIds     = array_unique(array_column($problems, 'objectid'));
 			$triggerHostMap = $this->fetchTriggerHostMap($triggerIds);
 			$debug['triggers_mapped'] = count($triggerHostMap);
 
+			$debug['step'] = 'fetchHosts';
 			$hostIds       = array_unique(array_map(fn($h) => $h['hostid'], array_values($triggerHostMap)));
 			$hostsRaw      = $this->fetchHosts($hostIds);
 			$hostGroupsMap = $this->fetchHostGroupsMap($hostIds);
 			$debug['hostgroups_fetched'] = array_sum(array_map('count', $hostGroupsMap));
+			$debug['step'] = 'parseHostMeta';
 			$hostMeta      = $this->parseHostMeta($hostsRaw, $hostGroupsMap);
 			$debug['hosts_found'] = count($hostMeta);
 
 			// Resolve customer_groupid → allowed hostid set for group-based filtering
+			$debug['step'] = 'resolveGroupHostIds';
 			$allowedHostIds = $this->resolveGroupHostIds($customerGroupId, $debug);
 			$problems = $this->applyFilters($problems, $triggerHostMap, $hostMeta, $env, $allowedHostIds, $search);
 			$debug['after_filter'] = count($problems);
@@ -108,11 +113,16 @@ class RcaData extends CController {
 				return;
 			}
 
+			$debug['step'] = 'loadRegistry+buildEventList';
 			$registry  = $this->loadRegistry();
 			$events    = $this->buildEventList($problems, $triggerHostMap, $hostMeta);
+			$debug['step'] = 'detectCascadeChains';
 			$chains    = $this->detectCascadeChains($events, $registry, $correlateBy);
+			$debug['step'] = 'scoreRootCause';
 			$rootCause = $this->scoreRootCause($events, $chains, $registry);
+			$debug['step'] = 'detectGaps';
 			$gapAlerts = $this->detectGaps($events, $registry);
+			$debug['step'] = 'buildSummary';
 			$summary   = $this->buildSummary($events, $chains, $gapAlerts, $rootCause, $timeFrom, $timeTill);
 
 			$response = [
@@ -461,6 +471,7 @@ class RcaData extends CController {
 				'parse_source'     => $meta['parse_source']     ?? 'unresolved',
 				'parse_confidence' => (float)($meta['parse_confidence'] ?? 0.0),
 				'unresolved'       => (bool)($meta['unresolved'] ?? false),
+				'hostgroups'       => $meta['hostgroups'] ?? [],
 				'rca_role'         => 'unknown',
 				'chain_id'         => null,
 				'delta_seconds'    => null,
@@ -479,7 +490,7 @@ class RcaData extends CController {
 				$delta = $effect['clock'] - $cause['clock'];
 				if ($delta <= 0 || $delta > 3600) continue;
 				$score = $this->correlationScore($cause, $effect, $patterns, $correlateBy, $delta);
-				if ($score < 0.35) continue;
+				if ($score < 0.20) continue;
 				$key = $cause['eventid'];
 				if (!isset($chains[$key])) {
 					$chains[$key] = ['chain_id' => 'chain_'.(++$chainIdx), 'root_event' => $cause,
@@ -510,7 +521,11 @@ class RcaData extends CController {
 			}
 		}
 		if (in_array('time',$by))      $s += 0.25*max(0,1.0-($delta/3600));
-		if (in_array('hostgroup',$by) && !empty($c['customer_name']) && $c['customer_name']===$e['customer_name']) $s += 0.20;
+		if (in_array('hostgroup',$by)) {
+			$shared = array_intersect($c['hostgroups'] ?? [], $e['hostgroups'] ?? []);
+			if (!empty($shared)) $s += 0.20;
+			elseif (!empty($c['customer_name']) && $c['customer_name'] === $e['customer_name']) $s += 0.15;
+		}
 		if ($c['type_layer'] < $e['type_layer']) $s += 0.10;
 		if (in_array('tags',$by)) {
 			$ol = count(array_intersect(array_column($c['tags'],'value'),array_column($e['tags'],'value')));
