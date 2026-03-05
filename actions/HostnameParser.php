@@ -8,10 +8,10 @@
  *   3. Fallback: extract from Zabbix hostgroup names (CUSTOMER/, PRODUCT/, TYPE/)
  *   4. If all fail: return raw hostname flagged as UNRESOLVED
  *
- * Namespace: Modules\RCA
+ * Namespace: Modules\RCA\Actions
  */
 
-namespace Modules\RCA;
+namespace Modules\RCA\Actions;
 
 class HostnameParser {
 
