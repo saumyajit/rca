@@ -8,10 +8,10 @@
  *   3. Fallback: extract from Zabbix hostgroup names (CUSTOMER/, PRODUCT/, TYPE/)
  *   4. If all fail: return raw hostname flagged as UNRESOLVED
  *
- * Namespace: Modules\RCA\Actions
+ * Namespace: Modules\RCA
  */
 
-namespace Modules\RCA\Actions;
+namespace Modules\RCA;
 
 class HostnameParser {
 
@@ -139,26 +139,23 @@ class HostnameParser {
 			'type'     => '^TYPE\/(.+)$',
 		];
 
+		// Collect ALL customer groups (host may belong to multiple CUSTOMER/* groups)
+		$customerCodes = [];
+		$customerNames = [];
+
 		foreach ($hostgroups as $hg) {
-			// CUSTOMER/xxx
-			if (!empty($patterns['customer']) && preg_match('/' . $patterns['customer'] . '/i', $hg, $m)) {
+			// CUSTOMER/xxx — collect all, don't overwrite
+			if (!empty($patterns['customer']) && preg_match('#' . $patterns['customer'] . '#i', $hg, $m)) {
 				$label = trim($m[1]);
 				$code  = $this->reverseCustomerLookup($label);
 				if ($code === '') {
-					// Not in map — generate slug consistent with RcaView dropdown key
 					$code = strtolower(preg_replace('/[^a-z0-9]+/i', '_', $label));
 				}
-				$out['customer']      = $code;
-				$out['customer_name'] = $label;
-				// Preserve mapped short name if available
-				if (!empty($this->map['customers'][$code]['short'])) {
-					$out['customer_short'] = $this->map['customers'][$code]['short'];
-				} else {
-					$out['customer_short'] = ucwords(strtolower($label));
-				}
+				$customerCodes[] = $code;
+				$customerNames[] = $label;
 			}
 			// PRODUCT/xxx
-			if (!empty($patterns['product']) && preg_match('/' . $patterns['product'] . '/i', $hg, $m)) {
+			if (!empty($patterns['product']) && preg_match('#' . $patterns['product'] . '#i', $hg, $m)) {
 				$label = trim($m[1]);
 				$code  = $this->reverseProductLookup($label);
 				if ($code === '') {
@@ -166,10 +163,12 @@ class HostnameParser {
 				}
 				$out['product']       = $code;
 				$out['product_name']  = $label;
-				$out['product_short'] = ucwords(strtolower($label));
+				$out['product_short'] = !empty($this->map['products'][$code]['short'])
+					? $this->map['products'][$code]['short']
+					: ucwords(strtolower($label));
 			}
 			// TYPE/xxx
-			if (!empty($patterns['type']) && preg_match('/' . $patterns['type'] . '/i', $hg, $m)) {
+			if (!empty($patterns['type']) && preg_match('#' . $patterns['type'] . '#i', $hg, $m)) {
 				$typeName = trim($m[1]);
 				$typeData = $this->reverseTypeLookup($typeName);
 				if ($typeData) {
@@ -178,7 +177,6 @@ class HostnameParser {
 					$out['type_icon']  = $typeData['icon'] ?? '🖥';
 					$out['type_layer'] = $typeData['layer'] ?? 3;
 				} else {
-					// Type not in map — use slug
 					$out['type']       = strtolower(preg_replace('/[^a-z0-9]+/i', '_', $typeName));
 					$out['type_name']  = $typeName;
 					$out['type_icon']  = '🖥';
@@ -186,6 +184,32 @@ class HostnameParser {
 				}
 			}
 		}
+
+		// Set primary customer (first known code, or first slug)
+		if (!empty($customerCodes)) {
+			// Prefer a code that matches hostname_map over a slug
+			$primary = null;
+			foreach ($customerCodes as $idx => $code) {
+				if (isset($this->map['customers'][$code])) {
+					$primary = $idx;
+					break;
+				}
+			}
+			$idx = $primary ?? 0;
+			$code = $customerCodes[$idx];
+			$label = $customerNames[$idx];
+
+			$out['customer']       = $code;
+			$out['customer_name']  = !empty($this->map['customers'][$code]['name'])
+				? $this->map['customers'][$code]['name']
+				: ucwords(strtolower($label));
+			$out['customer_short'] = !empty($this->map['customers'][$code]['short'])
+				? $this->map['customers'][$code]['short']
+				: ucwords(strtolower($label));
+			// Store all codes so filter can match any of them
+			$out['customer_codes'] = $customerCodes;
+		}
+
 		return $out;
 	}
 
@@ -289,6 +313,18 @@ class HostnameParser {
 	}
 
 	private function reverseTypeLookup(string $name): ?array {
+		$upper = strtoupper(trim($name));
+
+		// Check aliases map first (e.g. "ZABBIX SERVER" → "08")
+		$aliases = $this->map['server_type_aliases'] ?? [];
+		if (isset($aliases[$upper])) {
+			$code = $aliases[$upper];
+			if (isset($this->map['server_types'][$code])) {
+				return array_merge($this->map['server_types'][$code], ['code' => $code]);
+			}
+		}
+
+		// Direct name/short match
 		foreach ($this->map['server_types'] ?? [] as $code => $data) {
 			if (strcasecmp($data['name'], $name) === 0 || strcasecmp($data['short'], $name) === 0) {
 				return array_merge($data, ['code' => $code]);
