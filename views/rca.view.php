@@ -26,7 +26,7 @@ $jsConfig = json_encode([
 	'server_types'   => $serverTypes,
 ], JSON_HEX_TAG | JSON_HEX_AMP);
 ?>
-<link rel="stylesheet" type="text/css" href="<?= $assetBase ?>/css/rca.css">
+<link rel="stylesheet" type="text/css" href="<?= $assetBase ?>/css/rca.css?v=<?= time() ?>">
 
 <div id="rca-module" class="rca-wrap">
 
@@ -80,7 +80,7 @@ $jsConfig = json_encode([
 			<select id="rca-customer" class="rca-select">
 				<option value=""><?= _('All') ?></option>
 				<?php foreach ($customers as $code => $cust): ?>
-					<option value="<?= htmlspecialchars($code) ?>"><?= htmlspecialchars($cust['name'] ?? $code) ?></option>
+					<option value="<?= htmlspecialchars($cust['groupid'] ?? $code) ?>"><?= htmlspecialchars($cust['name'] ?? $code) ?></option>
 				<?php endforeach; ?>
 			</select>
 		</div>
@@ -218,4 +218,4 @@ $jsConfig = json_encode([
 </div>
 
 <script type="text/javascript">window.RCA_CONFIG = <?= $jsConfig ?>;</script>
-<script type="text/javascript" src="<?= $assetBase ?>/js/rca.js"></script>
+<script type="text/javascript" src="<?= $assetBase ?>/js/rca.js?v=<?= time() ?>"></script>
