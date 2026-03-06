@@ -78,9 +78,12 @@ $jsConfig = json_encode([
 		<div class="rca-filter-group">
 			<span class="rca-filter-label"><?= _('Customer') ?></span>
 			<select id="rca-customer" class="rca-select">
-				<option value=""><?= _('All') ?></option>
+				<option value="" data-groupid=""><?= _('All') ?></option>
 				<?php foreach ($customers as $code => $cust): ?>
-					<option value="<?= htmlspecialchars($code) ?>"><?= htmlspecialchars($cust['name'] ?? $code) ?></option>
+					<option value="<?= htmlspecialchars($code) ?>"
+					        data-groupid="<?= htmlspecialchars($cust['groupid'] ?? '') ?>">
+						<?= htmlspecialchars($cust['name'] ?? $code) ?>
+					</option>
 				<?php endforeach; ?>
 			</select>
 		</div>
