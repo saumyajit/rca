@@ -88,9 +88,11 @@
 
 	async function runAnalysis() {
 		const { timeFrom, timeTill } = getTimeRange();
-		const env      = document.getElementById('rca-env').value;
-		const customer = document.getElementById('rca-customer').value;
-		const search   = document.getElementById('rca-search').value;
+		const env          = document.getElementById('rca-env').value;
+		const customerEl   = document.getElementById('rca-customer');
+		const customer     = customerEl.value;
+		const groupid      = customerEl.options[customerEl.selectedIndex]?.dataset?.groupid || '';
+		const search       = document.getElementById('rca-search').value;
 
 		setLoading(true);
 		hideEmpty();
@@ -103,6 +105,7 @@
 		params.set('time_till', timeTill);
 		if (env)      params.set('env',      env);
 		if (customer) params.set('customer', customer);
+		if (groupid)  params.set('groupid',  groupid);
 		if (search)   params.set('search',   search);
 
 		// Correlation filters — send each active one as correlate_by[]
@@ -437,13 +440,36 @@
 
 	// ── EVENT TAB ─────────────────────────────────────────────────────────
 	function renderEventTab(evt, data) {
-		const rootCause = data.root_cause;
-		const isRoot    = evt.rca_role === 'root_cause';
-		const dotCls    = 'rca-sev-dot-' + (evt.severity >= 4 ? 'crit' : evt.severity >= 2 ? 'warn' : 'ok');
+		const rootCause  = data.root_cause;
+		const isRoot     = evt.rca_role === 'root_cause';
+		const isResolved = !!(evt.r_clock && evt.r_clock > 0);
+		const dotCls     = 'rca-sev-dot-' + (evt.severity >= 4 ? 'crit' : evt.severity >= 2 ? 'warn' : 'ok');
 
-		// Find matching registry pattern
+		// ── Triggered At: always show full date + time
+		const triggeredAt = escHtml(evt.clock_date + ' ' + evt.clock_fmt);
+
+		// ── Resolved At: show date only when it differs from trigger date
+		let resolvedAtStr = '—';
+		if (isResolved) {
+			resolvedAtStr = (evt.r_clock_date && evt.r_clock_date !== evt.clock_date)
+				? evt.r_clock_date + ' ' + (evt.r_clock_fmt || '')
+				: (evt.r_clock_fmt || '—');
+		}
+
+		// ── Error Duration: use PHP-computed value when resolved, live estimate when active
+		let durationStr, durationClass;
+		if (isResolved) {
+			durationStr   = evt.duration_fmt || '—';
+			const secs    = evt.duration_seconds || 0;
+			durationClass = secs > 3600 ? 'rca-crit' : secs > 600 ? 'rca-warn' : 'rca-ok';
+		} else {
+			const liveSecs = Math.floor(Date.now() / 1000) - evt.clock;
+			durationStr    = formatDelta(liveSecs) + ' (ongoing)';
+			durationClass  = liveSecs > 3600 ? 'rca-crit' : liveSecs > 600 ? 'rca-warn' : 'rca-info';
+		}
+
+		// ── Registry pattern banner for root cause
 		let patternHtml = '';
-		const registry  = data; // pattern data isn't in data directly; we show from root_cause context
 		if (isRoot) {
 			patternHtml = `
 				<div class="rca-section-title">Registry Pattern Match</div>
@@ -456,7 +482,7 @@
 				</div>`;
 		}
 
-		// Tags HTML
+		// ── Tags
 		const tagsHtml = (evt.tags || [])
 			.map(t => `<span class="rca-tag"><b>${escHtml(t.tag)}:</b>${escHtml(t.value)}</span>`)
 			.join('') || '<span style="color:var(--rca-text3);font-size:11px">No tags</span>';
@@ -472,16 +498,18 @@
 
 		<div class="rca-kv-grid">
 			<div class="rca-kv"><div class="rca-kv-k">Severity</div><div class="rca-kv-v rca-${evt.severity>=4?'crit':evt.severity>=2?'warn':'ok'}">${escHtml(evt.severity_name)}</div></div>
-			<div class="rca-kv"><div class="rca-kv-k">Status</div><div class="rca-kv-v rca-crit">PROBLEM</div></div>
-			<div class="rca-kv"><div class="rca-kv-k">Time</div><div class="rca-kv-v">${escHtml(evt.clock_fmt)}</div></div>
+			<div class="rca-kv"><div class="rca-kv-k">Status</div><div class="rca-kv-v ${isResolved ? 'rca-ok' : 'rca-crit'}">${isResolved ? '✓ RESOLVED' : '● PROBLEM'}</div></div>
+			<div class="rca-kv"><div class="rca-kv-k">Triggered At</div><div class="rca-kv-v">${triggeredAt}</div></div>
+			<div class="rca-kv"><div class="rca-kv-k">Resolved At</div><div class="rca-kv-v ${isResolved ? 'rca-ok' : ''}" style="${isResolved ? '' : 'color:var(--rca-text3)'}">${escHtml(resolvedAtStr)}</div></div>
+			<div class="rca-kv rca-kv-wide"><div class="rca-kv-k">Error Duration</div><div class="rca-kv-v ${durationClass}">${escHtml(durationStr)}</div></div>
 			<div class="rca-kv"><div class="rca-kv-k">Event ID</div><div class="rca-kv-v">#${escHtml(String(evt.eventid))}</div></div>
 			<div class="rca-kv"><div class="rca-kv-k">Chain</div><div class="rca-kv-v">${escHtml(evt.chain_id || 'None')}</div></div>
-			<div class="rca-kv"><div class="rca-kv-k">RCA Role</div><div class="rca-kv-v rca-${isRoot?'crit':'info'}">${isRoot?'★ ROOT CAUSE': escHtml(evt.rca_role || 'cascade')}</div></div>
+			<div class="rca-kv"><div class="rca-kv-k">RCA Role</div><div class="rca-kv-v rca-${isRoot?'crit':'info'}">${isRoot ? '★ ROOT CAUSE' : escHtml(evt.rca_role || 'cascade')}</div></div>
 		</div>
 
 		<div class="rca-section-title">Host Metadata</div>
 		<div class="rca-kv-grid">
-			<div class="rca-kv"><div class="rca-kv-k">Environment</div><div class="rca-kv-v rca-${evt.env_color}">${escHtml(evt.env_name || evt.env_short || '—')}</div></div>
+			<div class="rca-kv"><div class="rca-kv-k">Environment</div><div class="rca-kv-v rca-${evt.env_color || 'info'}">${escHtml(evt.env_name || evt.env_short || '—')}</div></div>
 			<div class="rca-kv"><div class="rca-kv-k">Customer</div><div class="rca-kv-v">${escHtml(evt.customer_name || '—')}</div></div>
 			<div class="rca-kv"><div class="rca-kv-k">Product</div><div class="rca-kv-v">${escHtml(evt.product_name || '—')}</div></div>
 			<div class="rca-kv"><div class="rca-kv-k">Server Type</div><div class="rca-kv-v">${escHtml(evt.type_name || '—')}</div></div>
