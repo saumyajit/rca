@@ -33,6 +33,7 @@ class RcaData extends CController {
 			'time_till'    => 'required|string',
 			'env'          => 'string',
 			'customer'     => 'string',
+			'groupid'      => 'string',
 			'search'       => 'string',
 			'correlate_by' => 'array',
 		];
@@ -52,6 +53,7 @@ class RcaData extends CController {
 		$timeFrom    = (int) $this->getInput('time_from', $timeTill - 3600);
 		$env         = $this->getInput('env', '');
 		$customer    = $this->getInput('customer', '');
+		$groupid     = $this->getInput('groupid', '');
 		$search      = $this->getInput('search', '');
 		$correlateBy = $this->getInput('correlate_by', ['alert_name', 'time', 'hostgroup']);
 
@@ -64,11 +66,28 @@ class RcaData extends CController {
 			'server_time'   => date('Y-m-d H:i:s', time()),
 			'env'           => $env,
 			'customer'      => $customer,
+			'groupid'       => $groupid,
 			'correlate_by'  => $correlateBy,
 		];
 
+		// Pre-resolve hostids from groupid so Event API filters at DB level.
+		// This is far more reliable than post-filtering via hostname parse.
+		$groupHostIds = [];
+		if ($groupid !== '') {
+			$groupHostIds = $this->fetchHostIdsByGroup($groupid, $debug);
+			$debug['group_host_ids_count'] = count($groupHostIds);
+			// If groupid was given but no hosts found, return empty — nothing to show.
+			if (empty($groupHostIds)) {
+				$resp = $this->emptyResponse($timeFrom, $timeTill);
+				$resp['notice'] = 'No hosts found in the selected customer group.';
+				if (self::DEBUG) $resp['debug'] = $debug;
+				$this->setResponse(new CControllerResponseData($resp));
+				return;
+			}
+		}
+
 		try {
-			$problems = $this->fetchProblems($timeFrom, $timeTill, $debug);
+			$problems = $this->fetchProblems($timeFrom, $timeTill, $debug, $groupHostIds);
 			$debug['problems_fetched'] = count($problems);
 
 			// Fetch recovery events to set r_clock on resolved problems
@@ -135,10 +154,10 @@ class RcaData extends CController {
 
 	// ── FETCH: tries Event API first, falls back to Problem API ──────────
 
-	private function fetchProblems(int $timeFrom, int $timeTill, array &$debug): array {
+	private function fetchProblems(int $timeFrom, int $timeTill, array &$debug, array $hostIds = []): array {
 		// Attempt 1: Event API (most reliable in Zabbix 7.0 module context)
 		try {
-			$r = API::Event()->get([
+			$params = [
 				'output'     => ['eventid', 'objectid', 'clock', 'name', 'severity',
 				                 'acknowledged', 'r_eventid', 'cause_eventid', 'value'],
 				'selectTags' => ['tag', 'value'],
@@ -150,7 +169,12 @@ class RcaData extends CController {
 				'sortfield'  => 'clock',
 				'sortorder'  => 'ASC',
 				'limit'      => self::MAX_EVENTS,
-			]);
+			];
+			// Filter at API level when a customer group was selected
+			if (!empty($hostIds)) {
+				$params['hostids'] = $hostIds;
+			}
+			$r = API::Event()->get($params);
 			if (is_array($r) && count($r) > 0) {
 				$debug['fetch_method'] = 'event_api';
 				$debug['fetch_count']  = count($r);
@@ -163,7 +187,7 @@ class RcaData extends CController {
 
 		// Attempt 2: Problem API
 		try {
-			$r = API::Problem()->get([
+			$params = [
 				'output'     => ['eventid', 'objectid', 'clock', 'name', 'severity',
 				                 'acknowledged', 'r_eventid', 'r_clock', 'cause_eventid'],
 				'selectTags' => ['tag', 'value'],
@@ -172,7 +196,11 @@ class RcaData extends CController {
 				'sortfield'  => 'clock',
 				'sortorder'  => 'ASC',
 				'limit'      => self::MAX_EVENTS,
-			]);
+			];
+			if (!empty($hostIds)) {
+				$params['hostids'] = $hostIds;
+			}
+			$r = API::Problem()->get($params);
 			if (is_array($r) && count($r) > 0) {
 				$debug['fetch_method'] = 'problem_api';
 				$debug['fetch_count']  = count($r);
@@ -185,7 +213,7 @@ class RcaData extends CController {
 
 		// Attempt 3: Trigger API — fetch triggers currently in problem state
 		try {
-			$r = API::Trigger()->get([
+			$params = [
 				'output'          => ['triggerid', 'description', 'priority', 'lastchange'],
 				'selectHosts'     => ['hostid', 'host', 'name'],
 				'filter'          => ['value' => 1],
@@ -194,7 +222,11 @@ class RcaData extends CController {
 				'sortfield'       => 'lastchange',
 				'sortorder'       => 'ASC',
 				'limit'           => self::MAX_EVENTS,
-			]);
+			];
+			if (!empty($hostIds)) {
+				$params['hostids'] = $hostIds;
+			}
+			$r = API::Trigger()->get($params);
 			if (is_array($r) && count($r) > 0) {
 				$debug['fetch_method'] = 'trigger_api';
 				$debug['fetch_count']  = count($r);
@@ -274,6 +306,27 @@ class RcaData extends CController {
 		unset($p);
 
 		return $problems;
+	}
+
+	/**
+	 * Resolve a Zabbix hostgroup ID → array of hostids.
+	 * Used to pre-filter Event API calls at the DB level when a customer is selected.
+	 */
+	private function fetchHostIdsByGroup(string $groupid, array &$debug): array {
+		try {
+			$hosts = API::Host()->get([
+				'output'   => ['hostid'],
+				'groupids' => [$groupid],
+			]);
+			if (!is_array($hosts)) {
+				$debug['group_host_error'] = 'API returned non-array';
+				return [];
+			}
+			return array_column($hosts, 'hostid');
+		} catch (\Throwable $e) {
+			$debug['group_host_error'] = $e->getMessage();
+			return [];
+		}
 	}
 
 	private function fetchTriggerHostMap(array $triggerIds): array {
@@ -361,9 +414,14 @@ class RcaData extends CController {
 		foreach ($problems as $p) {
 			$host = $triggerHostMap[$p['objectid']] ?? null;
 			if (!$host) continue;
-			$meta  = $hostMeta[$host['hostid']] ?? [];
-			$clock = (int)$p['clock'];
-			$sev   = (int)$p['severity'];
+			$meta   = $hostMeta[$host['hostid']] ?? [];
+			$clock  = (int)$p['clock'];
+			$rClock = !empty($p['r_clock']) ? (int)$p['r_clock'] : null;
+			$sev    = (int)$p['severity'];
+
+			// Compute duration only when resolved; for active problems use null
+			$durationSecs = ($rClock !== null && $rClock > $clock) ? ($rClock - $clock) : null;
+
 			$events[] = [
 				'eventid'          => $p['eventid'],
 				'hostid'           => $host['hostid'],
@@ -375,7 +433,11 @@ class RcaData extends CController {
 				'clock'            => $clock,
 				'clock_fmt'        => date('H:i:s', $clock),
 				'clock_date'       => date('Y-m-d', $clock),
-				'r_clock'          => !empty($p['r_clock']) ? (int)$p['r_clock'] : null,
+				'r_clock'          => $rClock,
+				'r_clock_fmt'      => $rClock !== null ? date('H:i:s', $rClock) : null,
+				'r_clock_date'     => $rClock !== null ? date('Y-m-d', $rClock)  : null,
+				'duration_seconds' => $durationSecs,
+				'duration_fmt'     => $durationSecs !== null ? $this->formatSpan($durationSecs) : null,
 				'acknowledged'     => (bool)$p['acknowledged'],
 				'tags'             => $p['tags'] ?? [],
 				'r_eventid'        => $p['r_eventid']     ?? null,
@@ -383,6 +445,7 @@ class RcaData extends CController {
 				'env'              => $meta['env']              ?? '',
 				'env_name'         => $meta['env_name']         ?? '',
 				'env_short'        => $meta['env_short']        ?? '',
+				'env_color'        => $meta['env_color']        ?? '',
 				'customer'         => $meta['customer']         ?? '',
 				'customer_name'    => $meta['customer_name']    ?? '',
 				'customer_short'   => $meta['customer_short']   ?? '',
